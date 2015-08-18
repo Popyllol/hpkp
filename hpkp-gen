@@ -2,26 +2,51 @@
 #
 # HTTP Public Key Pinning header pin generator
 # by Hanno Böck, https://hboeck.de
+# Additions by Lars Timmann, https://lars.timmann.de
+#
 # License: CC0 (public domain)
 #
 # https://tools.ietf.org/html/draft-ietf-websec-key-pinning-20
 
-if [ "$1" = "" ]; then
-	echo "HKP header generator according to"
-	echo "http://tools.ietf.org/html/draft-ietf-websec-key-pinning-20"
-	echo ""
-	echo "Usage: $0 [files]"
-	echo ""
-	echo "[files] should contain at least 2 files and can be of type"
-	echo ".crt (certificate), .csr (certificate request) or"
-	echo ".key (private key)"
-	exit 1
-fi
+function usage () {
+  echo "HKP header generator according to"
+  echo "http://tools.ietf.org/html/draft-ietf-websec-key-pinning-20"
+  echo ""
+  echo "Usage: $0 ([files]|create <country code 2 letters> <state> <Location> <fqdn of host>)"
+  echo ""
+  echo "[files] should contain at least 2 files and can be of type"
+  echo ".crt (certificate), .csr (certificate request) or"
+  echo ".key (private key)"
+  exit 1
+}
 
-head="Public-Key-Pins: max-age=5184000; "
+case $1 in
+"")
+	usage;
+	;;
+"create")
+	if [ $# -ne 5 ]
+	then
+	  usage;
+	fi
+        country=$2
+        state=$3
+        location=$4
+        fqdn=$5
+        openssl genrsa -out ${fqdn}.hpkp1.key 4096
+        openssl genrsa -out ${fqdn}.hpkp2.key 4096
+	openssl req -new -sha256 -key ${fqdn}.hpkp1.key -out ${fqdn}.hpkp.csr -subj "/C=${country}/ST=${state}/L=${location}/CN=${fqdn}"
+	files="${fqdn}.hpkp1.key ${fqdn}.hpkp2.key ${fqdn}.hpkp.csr"
+	;;
+*)
+	files="$*"
+	;;
+esac
+
+head="Header always set Public-Key-Pins \"max-age=5184000; "
 
 c=0
-for f in "$@"; do
+for f in ${files}; do
 	if [ "${f: -4}" = ".crt" ]; then
 		pkey=`openssl x509 -pubkey -noout -in $f`
 	elif [ "${f: -4}" = ".csr" ]; then
@@ -34,9 +59,10 @@ for f in "$@"; do
 	fi
 	let c+=1
 	phash=`echo "$pkey"|grep -v PUBLIC|base64 -d|openssl dgst -sha256 -binary|base64`
-	head="${head}pin-sha256=\"$phash\";"
+	head="${head}pin-sha256=\\\"$phash\\\";"
 done
+head="${head}\"";
 
 [ $c -eq 1 ] && echo "Warning: HKP requires at least 2 keys" >&2
+echo "Header always set Strict-Transport-Security \"max-age=31556926;\""
 echo $head
-
